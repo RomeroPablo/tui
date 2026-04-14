@@ -6,7 +6,7 @@ CXXFLAGS := -std=c++23
 LDFLAGS :=
 LDLIBS :=
 
-MODULES := tui sphere
+MODULES := tui sphere progressBar linePlot barPlot
 MAIN_SOURCE := main.cpp
 
 MODULE_PCMS := $(MODULES:%=$(ARTIFACTS_DIR)/%.pcm)
@@ -31,7 +31,7 @@ run: $(APP)
 	./$(APP)
 
 clean:
-	rm -rf $(ARTIFACTS_DIR) .cache app main.o tui.o tui.pcm sphere.o sphere.pcm compile_commands.json
+	rm -rf $(ARTIFACTS_DIR) .cache app main.o tui.o tui.pcm sphere.o sphere.pcm progressBar.o progressBar.pcm linePlot.o linePlot.pcm barPlot.o barPlot.pcm compile_commands.json
 
 $(ARTIFACTS_DIR):
 	mkdir -p $(ARTIFACTS_DIR)
