@@ -1,4 +1,5 @@
 ARTIFACTS_DIR := .artifacts
+MODULE_DIR := lib
 
 CXX := clang++
 CPPFLAGS :=
@@ -6,7 +7,7 @@ CXXFLAGS := -std=c++23
 LDFLAGS :=
 LDLIBS :=
 
-MODULES := tui sphere progressBar linePlot barPlot
+MODULES := sphere progressBar linePlot barPlot tui
 MAIN_SOURCE := main.cpp
 
 MODULE_PCMS := $(MODULES:%=$(ARTIFACTS_DIR)/%.pcm)
@@ -36,8 +37,13 @@ clean:
 $(ARTIFACTS_DIR):
 	mkdir -p $(ARTIFACTS_DIR)
 
-$(ARTIFACTS_DIR)/%.pcm: %.cppm | $(ARTIFACTS_DIR)
+$(ARTIFACTS_DIR)/%.pcm: $(MODULE_DIR)/%.cppm | $(ARTIFACTS_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MJ $(ARTIFACTS_DIR)/$*.pcm.json --precompile $< -o $@
+
+$(ARTIFACTS_DIR)/tui.pcm: $(ARTIFACTS_DIR)/sphere.pcm $(ARTIFACTS_DIR)/progressBar.pcm \
+	$(ARTIFACTS_DIR)/linePlot.pcm $(ARTIFACTS_DIR)/barPlot.pcm
+$(ARTIFACTS_DIR)/tui.pcm: CPPFLAGS += -fprebuilt-module-path=$(ARTIFACTS_DIR)
+$(ARTIFACTS_DIR)/tui.o: CPPFLAGS += -fprebuilt-module-path=$(ARTIFACTS_DIR)
 
 $(ARTIFACTS_DIR)/%.o: $(ARTIFACTS_DIR)/%.pcm | $(ARTIFACTS_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MJ $(ARTIFACTS_DIR)/$*.json $< -c -o $@

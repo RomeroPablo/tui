@@ -4,10 +4,6 @@
 #include <chrono>
 #include <vector>
 import tui;
-import sphere;
-import progressBar;
-import linePlot;
-import barPlot;
 
 int main(){
     TUI tui{};

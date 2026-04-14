@@ -4,6 +4,10 @@ module;
 #include <iostream>
 #include <termios.h>
 export module tui;
+export import sphere;
+export import progressBar;
+export import linePlot;
+export import barPlot;
 
 export struct TUI{
     static inline TUI* self = nullptr;
