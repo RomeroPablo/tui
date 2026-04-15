@@ -26,12 +26,11 @@ export struct Sphere {
     config_ = normalizedConfig(config);
   }
 
-  void render() {
+  std::vector<std::string> render() {
     if(!initialized_)configure(sphereConfig{});
     const auto now = Clock::now();
     advanceTo(now);
-    const std::vector<std::string> lines = renderFrame();
-    for(const std::string& line : lines) std::puts(line.c_str());
+    return renderFrame();
   }
 
  private:

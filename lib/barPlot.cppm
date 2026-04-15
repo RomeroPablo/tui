@@ -38,9 +38,8 @@ export struct barPlot{
         config_ = normalizedConfig(config);
     }
 
-    void render() {
-        const std::vector<std::string> lines = renderFrame();
-        for (const std::string& line : lines) std::puts(line.c_str());
+    std::vector<std::string> render() const {
+        return renderFrame();
     }
 
   private:

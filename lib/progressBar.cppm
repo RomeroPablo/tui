@@ -4,6 +4,7 @@ module;
 #include <cstdio>
 #include <string>
 #include <utility>
+#include <vector>
 export module progressBar;
 
 /* example of progress bars:
@@ -26,11 +27,9 @@ export struct progressBar{
         config_ = normalizedConfig(config);
     }
 
-    void render() {
+    std::vector<std::string> render() const {
         const std::string line = renderLine();
-        for (int row = 0; row < config_.height; ++row) {
-            std::puts(line.c_str());
-        }
+        return std::vector<std::string>(static_cast<std::size_t>(config_.height), line);
     }
 
   private:

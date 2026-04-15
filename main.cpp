@@ -1,5 +1,4 @@
 #include <cmath>
-#include <iostream>
 #include <thread>
 #include <chrono>
 #include <vector>
@@ -56,26 +55,46 @@ int main(){
     while(tui.running.load(std::memory_order_relaxed)){
         tui.clear();
         tui.handleInput();
-        std::cout << "on new screen!" << std::endl;
+        tui.writeLine("on new screen!");
+        tui.writeLine("resolution: " + std::to_string(tui.width) + ", " + std::to_string(tui.height));
 
         cfg.angle = cfg.angle + 0.5;
         sphere.configure(cfg);
-        sphere.render();
+        tui.writeLines(sphere.render());
 
         pBarCfg.currentValue = std::fmod(pBarCfg.currentValue+0.5, 100);
         pBar.configure(pBarCfg);
-        pBar.render();
+        tui.writeLines(pBar.render());
 
         for(int i = 0; i < 16; ++i)
             plotCfg.yData[i] = std::sin((i * 0.5) + (cfg.angle * 0.02));
         plot.configure(plotCfg);
-        plot.render();
+        tui.writeLines(plot.render());
 
+        tui.beginRow();
+        tui.drawBox({48, 32});
+        tui.writeLine("text inside of box!");
+        tui.writeLine("new line inside of box..");
+        tui.writeLine("Bar plot inside of box:");
+        tui.writeLine(""); // line break
         for(int i = 0; i < 8; ++i)
             barCfg.yData[i] = 0.5 + (0.4 * std::sin((i * 0.6) + (cfg.angle * 0.03)));
         bars.configure(barCfg);
-        bars.render();
+        tui.writeLines(bars.render());
+        tui.drawBox({16, 8});
+        tui.writeLine("internal box");
+        tui.endRegion();
+        tui.writeLine("How can I get this line outside of the box?");
+        tui.endRegion();
 
+        tui.drawBox({16, 8});
+        tui.writeLine("right box");
+        tui.endRegion();
+        tui.endRow();
+
+        tui.writeLine("is this out of both?");
+
+        tui.flush();
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
     tui.exitTui();

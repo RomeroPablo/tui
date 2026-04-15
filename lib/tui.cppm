@@ -1,13 +1,44 @@
 module;
+#include <algorithm>
 #include <atomic>
 #include <csignal>
-#include <iostream>
+#include <cstdio>
+#include <cstdint>
+#include <string_view>
+#include <string>
 #include <termios.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+#include <utility>
+#include <vector>
 export module tui;
 export import sphere;
 export import progressBar;
 export import linePlot;
 export import barPlot;
+
+export struct Rect{
+    int x{};
+    int y{};
+    int width{};
+    int height{};
+};
+
+struct RegionFrame{
+    Rect rect{};
+    int cursorX{};
+    int cursorY{};
+    int resumeX{};
+    int resumeY{};
+};
+
+struct RowFrame{
+    int originX{};
+    int originY{};
+    int nextX{};
+    int maxHeight{};
+    std::size_t regionDepth{};
+};
 
 export struct TUI{
     static inline TUI* self = nullptr;
@@ -17,44 +48,124 @@ export struct TUI{
     termios terminalConfig{};
     uint32_t width{};
     uint32_t height{};
+    std::vector<std::vector<std::string>> framebuffer{};
+    std::vector<RegionFrame> regions{};
+    std::vector<RowFrame> rows{};
     void enterTui();
     void exitTui();
     void toOrigin();
     void clear();
+    void flush();
     void configure();
     void handleInput();
     void handleResize();
+    std::pair<int, int> getPos();
+    void beginRow();
+    void endRow();
+    void beginRegion(Rect rect);
+    void endRegion();
+    void write(std::string_view text);
+    void writeLine(std::string_view text);
+    void writeLines(const std::vector<std::string>& lines);
+    Rect drawBox(std::pair<int, int> res);
+    Rect drawBoxAt(Rect rect);
     static void on_sig_winch(int);
     static void on_sig_int(int);
-
 };
 
 void TUI::enterTui(){
     configure();
-    std::cout << "\033[?1049h";
+    std::printf("\033[?1049h");
+    clear();
 };
 
 void TUI::exitTui(){
-    std::cout << "\033[?1049l";
+    std::printf("\033[?1049l");
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &oldTerminalConfig);
 };
 
-void TUI::toOrigin(){ std::cout<<"\033[H"; };
-void TUI::clear(){ std::cout<<"\033[2J\033[H"; };
+void TUI::toOrigin(){ std::printf("\033[H"); };
+
+static std::vector<std::string> glyphsFrom(std::string_view text){
+    std::vector<std::string> glyphs;
+    for(std::size_t i = 0; i < text.size(); ){
+        unsigned char byte = static_cast<unsigned char>(text[i]);
+        std::size_t length = 1;
+        if((byte & 0x80u) == 0u) length = 1;
+        else if((byte & 0xE0u) == 0xC0u) length = 2;
+        else if((byte & 0xF0u) == 0xE0u) length = 3;
+        else if((byte & 0xF8u) == 0xF0u) length = 4;
+        if(i + length > text.size()) length = 1;
+        glyphs.emplace_back(text.substr(i, length));
+        i += length;
+    }
+    return glyphs;
+}
+
+static Rect clipped(Rect rect, Rect bounds){
+    const int left = std::max(rect.x, bounds.x);
+    const int top = std::max(rect.y, bounds.y);
+    const int right = std::min(rect.x + rect.width, bounds.x + bounds.width);
+    const int bottom = std::min(rect.y + rect.height, bounds.y + bounds.height);
+    return {left, top, std::max(0, right - left), std::max(0, bottom - top)};
+}
+
+static Rect inner(Rect rect){
+    return {rect.x + 1, rect.y + 1, std::max(0, rect.width - 2), std::max(0, rect.height - 2)};
+}
+
+static int glyphCount(std::string_view text){
+    int count = 0;
+    for(std::size_t i = 0; i < text.size(); ++count){
+        unsigned char byte = static_cast<unsigned char>(text[i]);
+        std::size_t length = 1;
+        if((byte & 0x80u) == 0u) length = 1;
+        else if((byte & 0xE0u) == 0xC0u) length = 2;
+        else if((byte & 0xF0u) == 0xE0u) length = 3;
+        else if((byte & 0xF8u) == 0xF0u) length = 4;
+        if(i + length > text.size()) length = 1;
+        i += length;
+    }
+    return count;
+}
+
+void TUI::clear(){
+    framebuffer.assign(
+        static_cast<std::size_t>(height),
+        std::vector<std::string>(static_cast<std::size_t>(width), " "));
+    regions.clear();
+    regions.push_back({{0, 0, static_cast<int>(width), static_cast<int>(height)}, 0, 0, 0, 0});
+    rows.clear();
+}
+
+void TUI::flush(){
+    std::printf("\033[2J\033[H");
+    for(const auto& row : framebuffer){
+        std::string line;
+        line.reserve(row.size() * 3);
+        for(const std::string& cell : row) line += cell;
+        std::puts(line.c_str());
+    }
+}
 
 void TUI::handleResize(){
+    if(resize.load(std::memory_order_relaxed)){
+        resize = false;
+        winsize ws{};
+        if(ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0){
+            width = ws.ws_col; height = ws.ws_row;
+        }
+        clear();
+    }
+}
 
-};
+void TUI::handleInput(){
+    handleResize();
+}
 
-void TUI::handleInput(){};
+void TUI::on_sig_winch(int){ if(self) self->resize.store(true, std::memory_order_relaxed); };
 
-void TUI::on_sig_winch(int){
-    if(self) self->resize.store(true, std::memory_order_relaxed);
-};
-
-void TUI::on_sig_int(int){
-    if(self) self->running.store(false, std::memory_order_relaxed);
-};
+void TUI::on_sig_int(int){ if(self) self->running.store(false, std::memory_order_relaxed); };
 
 void TUI::configure(){
     self = this;
@@ -64,33 +175,240 @@ void TUI::configure(){
     terminalConfig = oldTerminalConfig;
     terminalConfig.c_lflag &= ~ECHO;
     terminalConfig.c_lflag &= ~ICANON;
-    //terminalConfig.c_lflag &= ~ISIG;
     terminalConfig.c_cc[VMIN]  = 0;
     terminalConfig.c_cc[VTIME] = 0;
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &terminalConfig);
-    // resize function callback
+    winsize ws{};
+    if(ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0){
+        width = ws.ws_col; height = ws.ws_row;
+    }
+    clear();
     sa = {};
     sa.sa_handler = &TUI::on_sig_winch;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
     sigaction(SIGWINCH, &sa, nullptr);
-    // exit function callback
     sa = {};
     sa.sa_handler = &TUI::on_sig_int;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
     sigaction(SIGINT, &sa, nullptr);
-};
+}
 
-// plots:
+std::pair<int, int> TUI::getPos(){
+    termios queryConfig = terminalConfig;
+    queryConfig.c_cc[VMIN] = 0;
+    queryConfig.c_cc[VTIME] = 5;
+    tcsetattr(STDIN_FILENO, TCSANOW, &queryConfig);
+    tcflush(STDIN_FILENO, TCIFLUSH);
+    std::printf("\033[6n");
+    std::fflush(stdout);
+
+    std::string response;
+    char ch{};
+    while(read(STDIN_FILENO, &ch, 1) == 1){
+        response.push_back(ch);
+        if(ch == 'R') break;
+    }
+
+    tcsetattr(STDIN_FILENO, TCSANOW, &terminalConfig);
+
+    int row = 1;
+    int col = 1;
+    if(std::sscanf(response.c_str(), "\033[%d;%dR", &row, &col) == 2)
+        return {col, row};
+    return {1, 1};
+}
+
+void TUI::beginRow(){
+    RegionFrame& region = regions.back();
+    rows.push_back({region.cursorX, region.cursorY, region.cursorX, 0, regions.size()});
+}
+
+void TUI::endRow(){
+    if(rows.empty()) return;
+    RowFrame finished = rows.back();
+    rows.pop_back();
+    RegionFrame& region = regions[finished.regionDepth - 1];
+    region.cursorX = finished.originX;
+    region.cursorY = std::clamp(
+        finished.originY + finished.maxHeight,
+        region.rect.y,
+        region.rect.y + region.rect.height);
+}
+
+void TUI::beginRegion(Rect rect){
+    RegionFrame parent = regions.back();
+    Rect next = clipped(rect, parent.rect);
+    regions.push_back({next, next.x, next.y, parent.cursorX, parent.cursorY});
+}
+
+void TUI::endRegion(){
+    if(regions.size() <= 1) return;
+    RegionFrame finished = regions.back();
+    regions.pop_back();
+    regions.back().cursorX = std::clamp(
+        finished.resumeX, regions.back().rect.x, regions.back().rect.x + regions.back().rect.width);
+    regions.back().cursorY = std::clamp(
+        finished.resumeY, regions.back().rect.y, regions.back().rect.y + regions.back().rect.height);
+}
+
+void TUI::write(std::string_view text){
+    if(regions.empty()) return;
+    RegionFrame& region = regions.back();
+    if(region.rect.width <= 0 || region.rect.height <= 0 ||
+       region.cursorY >= region.rect.y + region.rect.height) return;
+    std::vector<std::string> glyphs = glyphsFrom(text);
+    int x = region.cursorX;
+    for(const std::string& glyph : glyphs){
+        if(x >= region.rect.x + region.rect.width) break;
+        if(x >= region.rect.x && region.cursorY >= region.rect.y &&
+           region.cursorY < region.rect.y + region.rect.height)
+            framebuffer[static_cast<std::size_t>(region.cursorY)][static_cast<std::size_t>(x)] = glyph;
+        ++x;
+    }
+    region.cursorX = std::min(x, region.rect.x + region.rect.width);
+}
+
+void TUI::writeLine(std::string_view text){
+    if(regions.empty()) return;
+    if(!rows.empty() && rows.back().regionDepth == regions.size()){
+        RegionFrame& region = regions.back();
+        RowFrame& row = rows.back();
+        if(region.rect.width <= 0 || region.rect.height <= 0 ||
+           row.originY >= region.rect.y + region.rect.height) return;
+        region.cursorX = row.nextX;
+        region.cursorY = row.originY;
+        write(text);
+        row.nextX = region.cursorX;
+        row.maxHeight = std::max(row.maxHeight, 1);
+        return;
+    }
+    RegionFrame& region = regions.back();
+    if(region.rect.width <= 0 || region.rect.height <= 0 ||
+       region.cursorY >= region.rect.y + region.rect.height) return;
+    region.cursorX = region.rect.x;
+    write(text);
+    for(int x = region.cursorX; x < region.rect.x + region.rect.width; ++x)
+        framebuffer[static_cast<std::size_t>(region.cursorY)][static_cast<std::size_t>(x)] = " ";
+    region.cursorX = region.rect.x;
+    ++region.cursorY;
+}
+
+void TUI::writeLines(const std::vector<std::string>& lines){
+    if(!rows.empty() && rows.back().regionDepth == regions.size()){
+        RegionFrame& region = regions.back();
+        RowFrame& row = rows.back();
+        const int startX = row.nextX;
+        const int startY = row.originY;
+        int maxWidth = 0;
+        region.cursorX = startX;
+        region.cursorY = startY;
+        for(std::size_t i = 0; i < lines.size(); ++i){
+            region.cursorX = startX;
+            region.cursorY = startY + static_cast<int>(i);
+            write(lines[i]);
+            maxWidth = std::max(maxWidth, glyphCount(lines[i]));
+        }
+        row.nextX = startX + maxWidth;
+        row.maxHeight = std::max(row.maxHeight, static_cast<int>(lines.size()));
+        region.cursorX = row.nextX;
+        region.cursorY = row.originY;
+        return;
+    }
+    for(const std::string& line : lines) writeLine(line);
+}
+
+Rect TUI::drawBox(std::pair<int, int> res){
+    RegionFrame parent = regions.back();
+    int startX = parent.cursorX;
+    int startY = parent.cursorY;
+    if(!rows.empty() && rows.back().regionDepth == regions.size()){
+        startX = rows.back().nextX;
+        startY = rows.back().originY;
+    }
+    Rect outer = clipped({startX, startY, res.first, res.second}, parent.rect);
+    if(outer.width <= 0 || outer.height <= 0) return {outer.x, outer.y, 0, 0};
+    if(!rows.empty() && rows.back().regionDepth == regions.size()){
+        rows.back().nextX = outer.x + outer.width;
+        rows.back().maxHeight = std::max(rows.back().maxHeight, outer.height);
+        regions.back().cursorX = rows.back().nextX;
+        regions.back().cursorY = rows.back().originY;
+    } else {
+        regions.back().cursorX = outer.x;
+        regions.back().cursorY = std::min(
+            outer.y + outer.height,
+            regions.back().rect.y + regions.back().rect.height);
+    }
+    auto setCell = [&](int x, int y, std::string glyph) {
+        if(x < 0 || y < 0 || x >= static_cast<int>(width) || y >= static_cast<int>(height)) return;
+        framebuffer[static_cast<std::size_t>(y)][static_cast<std::size_t>(x)] = std::move(glyph);
+    };
+    if(outer.height == 1){
+        setCell(outer.x, outer.y, "┌");
+        for(int x = 1; x < outer.width - 1; ++x) setCell(outer.x + x, outer.y, "─");
+        if(outer.width > 1) setCell(outer.x + outer.width - 1, outer.y, "┐");
+    } else if(outer.width == 1){
+        setCell(outer.x, outer.y, "┌");
+        for(int y = 1; y < outer.height - 1; ++y) setCell(outer.x, outer.y + y, "│");
+        if(outer.height > 1) setCell(outer.x, outer.y + outer.height - 1, "└");
+    } else {
+        setCell(outer.x, outer.y, "┌");
+        setCell(outer.x + outer.width - 1, outer.y, "┐");
+        setCell(outer.x, outer.y + outer.height - 1, "└");
+        setCell(outer.x + outer.width - 1, outer.y + outer.height - 1, "┘");
+        for(int x = 1; x < outer.width - 1; ++x){
+            setCell(outer.x + x, outer.y, "─");
+            setCell(outer.x + x, outer.y + outer.height - 1, "─");
+        }
+        for(int y = 1; y < outer.height - 1; ++y){
+            setCell(outer.x, outer.y + y, "│");
+            setCell(outer.x + outer.width - 1, outer.y + y, "│");
+        }
+    }
+    Rect content = inner(outer);
+    regions.push_back({content, content.x, content.y, outer.x, outer.y + outer.height});
+    return content;
+}
+
+Rect TUI::drawBoxAt(Rect rect){
+    Rect outer = clipped(rect, regions.back().rect);
+    if(outer.width <= 0 || outer.height <= 0) return {outer.x, outer.y, 0, 0};
+
+    auto setCell = [&](int x, int y, std::string glyph) {
+        if(x < 0 || y < 0 || x >= static_cast<int>(width) || y >= static_cast<int>(height)) return;
+        framebuffer[static_cast<std::size_t>(y)][static_cast<std::size_t>(x)] = std::move(glyph);
+    };
+
+    if(outer.height == 1){
+        setCell(outer.x, outer.y, "┌");
+        for(int x = 1; x < outer.width - 1; ++x) setCell(outer.x + x, outer.y, "─");
+        if(outer.width > 1) setCell(outer.x + outer.width - 1, outer.y, "┐");
+    } else if(outer.width == 1){
+        setCell(outer.x, outer.y, "┌");
+        for(int y = 1; y < outer.height - 1; ++y) setCell(outer.x, outer.y + y, "│");
+        if(outer.height > 1) setCell(outer.x, outer.y + outer.height - 1, "└");
+    } else {
+        setCell(outer.x, outer.y, "┌");
+        setCell(outer.x + outer.width - 1, outer.y, "┐");
+        setCell(outer.x, outer.y + outer.height - 1, "└");
+        setCell(outer.x + outer.width - 1, outer.y + outer.height - 1, "┘");
+        for(int x = 1; x < outer.width - 1; ++x){
+            setCell(outer.x + x, outer.y, "─");
+            setCell(outer.x + x, outer.y + outer.height - 1, "─");
+        }
+        for(int y = 1; y < outer.height - 1; ++y){
+            setCell(outer.x, outer.y + y, "│");
+            setCell(outer.x + outer.width - 1, outer.y + y, "│");
+        }
+    }
+
+    Rect content = inner(outer);
+    regions.push_back({content, content.x, content.y, regions.back().cursorX, regions.back().cursorY});
+    return content;
+}
 
 /*
-╭ ╮╰ ╯ │ ─ ┤
-
-┌─  │  ─┐
-│  ─┼─  │
-└─  │  ─┘
-
 ["⣾ " "⣽ " "⣻ " "⢿ " "⡿ " "⣟ " "⣯ " "⣷ "]
 ["⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"]
- */
+*/
