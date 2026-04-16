@@ -49,6 +49,7 @@ export struct TUI{
     uint32_t width{};
     uint32_t height{};
     std::vector<std::vector<std::string>> framebuffer{};
+    std::vector<std::string> previousRows{};
     std::vector<RegionFrame> regions{};
     std::vector<RowFrame> rows{};
     void enterTui();
@@ -75,12 +76,12 @@ export struct TUI{
 
 void TUI::enterTui(){
     configure();
-    std::printf("\033[?1049h");
+    std::printf("\033[?1049h\033[?25l");
     clear();
 };
 
 void TUI::exitTui(){
-    std::printf("\033[?1049l");
+    std::printf("\033[?25h\033[?1049l");
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &oldTerminalConfig);
 };
 
@@ -133,18 +134,30 @@ void TUI::clear(){
     framebuffer.assign(
         static_cast<std::size_t>(height),
         std::vector<std::string>(static_cast<std::size_t>(width), " "));
+    previousRows.assign(static_cast<std::size_t>(height), "");
     regions.clear();
     regions.push_back({{0, 0, static_cast<int>(width), static_cast<int>(height)}, 0, 0, 0, 0});
     rows.clear();
 }
 
 void TUI::flush(){
-    std::printf("\033[2J\033[H");
-    for(const auto& row : framebuffer){
+    std::string output;
+    output.reserve(static_cast<std::size_t>(height) * static_cast<std::size_t>(width + 16));
+
+    for(std::size_t y = 0; y < framebuffer.size(); ++y){
         std::string line;
-        line.reserve(row.size() * 3);
-        for(const std::string& cell : row) line += cell;
-        std::puts(line.c_str());
+        line.reserve(framebuffer[y].size() * 3);
+        for(const std::string& cell : framebuffer[y]) line += cell;
+        if(y >= previousRows.size()) previousRows.resize(y + 1);
+        if(line == previousRows[y]) continue;
+        output += "\033[" + std::to_string(y + 1) + ";1H";
+        output += line;
+        previousRows[y] = std::move(line);
+    }
+
+    if(!output.empty()){
+        std::fwrite(output.data(), 1, output.size(), stdout);
+        std::fflush(stdout);
     }
 }
 
@@ -156,6 +169,8 @@ void TUI::handleResize(){
             width = ws.ws_col; height = ws.ws_row;
         }
         clear();
+        std::printf("\033[2J\033[H");
+        std::fflush(stdout);
     }
 }
 
