@@ -40,6 +40,14 @@ struct RowFrame{
     std::size_t regionDepth{};
 };
 
+struct ColumnFrame{
+    int originX{};
+    int originY{};
+    int nextY{};
+    int maxWidth{};
+    std::size_t regionDepth{};
+};
+
 export struct TUI{
     static inline TUI* self = nullptr;
     std::atomic<bool> resize{};
@@ -52,6 +60,7 @@ export struct TUI{
     std::vector<std::string> previousRows{};
     std::vector<RegionFrame> regions{};
     std::vector<RowFrame> rows{};
+    std::vector<ColumnFrame> columns{};
     void enterTui();
     void exitTui();
     void toOrigin();
@@ -63,6 +72,8 @@ export struct TUI{
     std::pair<int, int> getPos();
     void beginRow();
     void endRow();
+    void beginColumn();
+    void endColumn();
     void beginRegion(Rect rect);
     void endRegion();
     void write(std::string_view text);
@@ -138,6 +149,7 @@ void TUI::clear(){
     regions.clear();
     regions.push_back({{0, 0, static_cast<int>(width), static_cast<int>(height)}, 0, 0, 0, 0});
     rows.clear();
+    columns.clear();
 }
 
 void TUI::flush(){
@@ -252,6 +264,54 @@ void TUI::endRow(){
         region.rect.y + region.rect.height);
 }
 
+void TUI::beginColumn(){
+    RegionFrame& region = regions.back();
+    int originX = region.cursorX;
+    int originY = region.cursorY;
+    if(!rows.empty() && rows.back().regionDepth == regions.size() &&
+       (columns.empty() || columns.back().regionDepth != regions.size())){
+        originX = rows.back().nextX;
+        originY = rows.back().originY;
+        region.cursorX = originX;
+        region.cursorY = originY;
+    }
+    columns.push_back({originX, originY, originY, 0, regions.size()});
+}
+
+void TUI::endColumn(){
+    if(columns.empty()) return;
+    ColumnFrame finished = columns.back();
+    columns.pop_back();
+
+    const int totalHeight = std::max(0, finished.nextY - finished.originY);
+    if(!columns.empty() && columns.back().regionDepth == finished.regionDepth){
+        ColumnFrame& parent = columns.back();
+        parent.nextY = finished.originY + totalHeight;
+        parent.maxWidth = std::max(parent.maxWidth, finished.maxWidth);
+        RegionFrame& region = regions[parent.regionDepth - 1];
+        region.cursorX = parent.originX;
+        region.cursorY = parent.nextY;
+        return;
+    }
+
+    if(!rows.empty() && rows.back().regionDepth == finished.regionDepth){
+        RowFrame& row = rows.back();
+        row.nextX = finished.originX + finished.maxWidth;
+        row.maxHeight = std::max(row.maxHeight, totalHeight);
+        RegionFrame& region = regions[row.regionDepth - 1];
+        region.cursorX = row.nextX;
+        region.cursorY = row.originY;
+        return;
+    }
+
+    RegionFrame& region = regions[finished.regionDepth - 1];
+    region.cursorX = finished.originX;
+    region.cursorY = std::clamp(
+        finished.originY + totalHeight,
+        region.rect.y,
+        region.rect.y + region.rect.height);
+}
+
 void TUI::beginRegion(Rect rect){
     RegionFrame parent = regions.back();
     Rect next = clipped(rect, parent.rect);
@@ -287,6 +347,20 @@ void TUI::write(std::string_view text){
 
 void TUI::writeLine(std::string_view text){
     if(regions.empty()) return;
+    if(!columns.empty() && columns.back().regionDepth == regions.size()){
+        RegionFrame& region = regions.back();
+        ColumnFrame& column = columns.back();
+        if(region.rect.width <= 0 || region.rect.height <= 0 ||
+           column.nextY >= region.rect.y + region.rect.height) return;
+        region.cursorX = column.originX;
+        region.cursorY = column.nextY;
+        write(text);
+        column.maxWidth = std::max(column.maxWidth, glyphCount(text));
+        column.nextY = region.cursorY + 1;
+        region.cursorX = column.originX;
+        region.cursorY = column.nextY;
+        return;
+    }
     if(!rows.empty() && rows.back().regionDepth == regions.size()){
         RegionFrame& region = regions.back();
         RowFrame& row = rows.back();
@@ -311,6 +385,25 @@ void TUI::writeLine(std::string_view text){
 }
 
 void TUI::writeLines(const std::vector<std::string>& lines){
+    if(!columns.empty() && columns.back().regionDepth == regions.size()){
+        RegionFrame& region = regions.back();
+        ColumnFrame& column = columns.back();
+        const int startX = column.originX;
+        const int startY = column.nextY;
+        int maxWidth = 0;
+        for(std::size_t i = 0; i < lines.size(); ++i){
+            region.cursorX = startX;
+            region.cursorY = startY + static_cast<int>(i);
+            if(region.cursorY >= region.rect.y + region.rect.height) break;
+            write(lines[i]);
+            maxWidth = std::max(maxWidth, glyphCount(lines[i]));
+        }
+        column.maxWidth = std::max(column.maxWidth, maxWidth);
+        column.nextY = startY + static_cast<int>(lines.size());
+        region.cursorX = column.originX;
+        region.cursorY = column.nextY;
+        return;
+    }
     if(!rows.empty() && rows.back().regionDepth == regions.size()){
         RegionFrame& region = regions.back();
         RowFrame& row = rows.back();
@@ -338,13 +431,21 @@ Rect TUI::drawBox(std::pair<int, int> res){
     RegionFrame parent = regions.back();
     int startX = parent.cursorX;
     int startY = parent.cursorY;
-    if(!rows.empty() && rows.back().regionDepth == regions.size()){
+    if(!columns.empty() && columns.back().regionDepth == regions.size()){
+        startX = columns.back().originX;
+        startY = columns.back().nextY;
+    } else if(!rows.empty() && rows.back().regionDepth == regions.size()){
         startX = rows.back().nextX;
         startY = rows.back().originY;
     }
     Rect outer = clipped({startX, startY, res.first, res.second}, parent.rect);
     if(outer.width <= 0 || outer.height <= 0) return {outer.x, outer.y, 0, 0};
-    if(!rows.empty() && rows.back().regionDepth == regions.size()){
+    if(!columns.empty() && columns.back().regionDepth == regions.size()){
+        columns.back().nextY = outer.y + outer.height;
+        columns.back().maxWidth = std::max(columns.back().maxWidth, outer.width);
+        regions.back().cursorX = columns.back().originX;
+        regions.back().cursorY = columns.back().nextY;
+    } else if(!rows.empty() && rows.back().regionDepth == regions.size()){
         rows.back().nextX = outer.x + outer.width;
         rows.back().maxHeight = std::max(rows.back().maxHeight, outer.height);
         regions.back().cursorX = rows.back().nextX;

@@ -55,6 +55,7 @@ int main(){
     while(tui.running.load(std::memory_order_relaxed)){
         tui.clear();
         tui.handleInput();
+
         tui.writeLine("on new screen!");
         tui.writeLine("resolution: " + std::to_string(tui.width) + ", " + std::to_string(tui.height));
 
@@ -84,15 +85,28 @@ int main(){
         tui.drawBox({16, 8});
         tui.writeLine("internal box");
         tui.endRegion();
-        tui.writeLine("How can I get this line outside of the box?");
+        tui.writeLine("This line is outside of the box");
         tui.endRegion();
 
         tui.drawBox({16, 8});
         tui.writeLine("right box");
         tui.endRegion();
+
+        tui.beginRow();
+        tui.drawBox({7, 10});
+        tui.endRegion();
+        tui.beginColumn();
+        tui.drawBox({7, 5});
+        tui.endRegion();
+        tui.drawBox({7, 5});
+        tui.endRegion();
+        tui.endColumn();
         tui.endRow();
 
-        tui.writeLine("is this out of both?");
+        tui.endRow();
+
+        tui.writeLine("Outside of both boxes");
+        
 
         tui.flush();
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
