@@ -16,6 +16,7 @@ export import sphere;
 export import progressBar;
 export import linePlot;
 export import barPlot;
+export import spinner;
 
 export struct Rect{
     int x{};

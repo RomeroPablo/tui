@@ -38,7 +38,7 @@ run: $(APP)
 	./$(APP)
 
 clean:
-	rm -rf $(ARTIFACTS_DIR) .cache app main.o tui.o tui.pcm sphere.o sphere.pcm progressBar.o progressBar.pcm linePlot.o linePlot.pcm barPlot.o barPlot.pcm compile_commands.json
+	rm -rf $(ARTIFACTS_DIR) .cache app main.o tui.o tui.pcm sphere.o sphere.pcm progressBar.o progressBar.pcm linePlot.o linePlot.pcm barPlot.o barPlot.pcm spinner.o spinner.pcm compile_commands.json
 
 $(MAIN_OBJECT): $(MAIN_SOURCE) $(MODULE_PCMS)
 	mkdir -p $(dir $@)

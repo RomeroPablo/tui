@@ -1,6 +1,7 @@
 #include <cmath>
-#include <thread>
 #include <chrono>
+#include <string>
+#include <thread>
 #include <vector>
 import tui;
 
@@ -22,6 +23,26 @@ int main(){
     pBarCfg.range = {0, 100};
     pBarCfg.currentValue = 0;
     pBar.configure(pBarCfg);
+
+    struct SpinnerDemo {
+        std::string label;
+        spinner widget;
+        spinnerConfig config;
+    };
+
+    std::vector<SpinnerDemo> spinnerDemos = {
+        {"dots", spinner{}, {"dots", 12.5}},
+        {"dots2", spinner{}, {"dots2", 10.0}},
+        {"line", spinner{}, {"line", 14.0}},
+        {"bounce", spinner{}, {"bounce", 8.0}},
+        {"pulse", spinner{}, {"pulse", 6.0}},
+        {"wave", spinner{}, {"wave", 10.0}},
+        {"orbit", spinner{}, {"orbit", 11.0}},
+        {"dots_circle", spinner{}, {"dots_circle", 9.0}}
+    };
+
+    for (SpinnerDemo& demo : spinnerDemos)
+        demo.widget.configure(demo.config);
 
     linePlot plot{};
     linePlotConfig plotCfg{};
@@ -66,6 +87,21 @@ int main(){
         pBarCfg.currentValue = std::fmod(pBarCfg.currentValue+0.5, 100);
         pBar.configure(pBarCfg);
         tui.writeLines(pBar.render());
+
+        tui.writeLine("spinner gallery:");
+        tui.beginRow();
+        for (std::size_t i = 0; i < spinnerDemos.size(); ++i) {
+            if (i > 0 && (i % 4) == 0) {
+                tui.endRow();
+                tui.beginRow();
+            }
+
+            tui.drawBox({18, 4});
+            tui.writeLine(spinnerDemos[i].label);
+            tui.writeLine(spinnerDemos[i].widget.render()[0]);
+            tui.endRegion();
+        }
+        tui.endRow();
 
         for(int i = 0; i < 16; ++i)
             plotCfg.yData[i] = std::sin((i * 0.5) + (cfg.angle * 0.02));
